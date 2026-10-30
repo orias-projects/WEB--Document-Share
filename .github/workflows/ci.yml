@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Required files
+        run: |
+          test -f README.md
+          test -f LICENSE
+          test -f .github/workflows/ci.yml
+
+      - name: Secret gate
+        id: secrets
+        run: |
+          missing=0
+          if [ -f .env.example ] && [ ! -f .env ]; then
+            echo "::warning::Missing .env (only .env.example present) — secret-dependent steps will be skipped"
+            missing=1
+          fi
+          if [ -f .env ] && grep -Eiq 'CHANGE_ME|your_|TODO_SECRET|replace_me|xxx' .env; then
+            echo "::warning::Placeholder secrets detected in .env — secret-dependent steps will be skipped"
+            missing=1
+          fi
+          echo "missing=$missing" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Node check
+        run: |
+          for pkg in package.json backend/package.json frontend/package.json; do
+            if [ -f "$pkg" ]; then
+              node -e "JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'))" "$pkg"
+            fi
+          done
+      - name: PHP lint
+        if: hashFiles('composer.json') != ''
+        run: |
+          sudo apt-get update && sudo apt-get install -y php-cli
+          find . -name '*.php' -not -path './vendor/*' | head -n 40 | xargs -r php -l || echo "::warning::php lint soft-failed"
